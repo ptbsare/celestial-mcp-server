@@ -29,49 +29,99 @@ function ensureDirectoryExists(dir) {
   }
 }
 
+function readMeta(metaPath) {
+  try {
+    if (!fs.existsSync(metaPath)) return null;
+    const raw = fs.readFileSync(metaPath, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function writeMeta(metaPath, data) {
+  try {
+    fs.writeFileSync(metaPath, JSON.stringify(data, null, 2), 'utf8');
+  } catch (err) {
+    console.error(`Failed to write meta file ${metaPath}: ${err.message}`);
+  }
+}
+
 /**
  * Download a file from URL
  */
-async function downloadFile(url, destination) {
+async function downloadFile(url, destination, attempt = 1) {
   const filePath = path.join(DATA_DIR, destination);
-  console.log(`Downloading ${url} to ${filePath}...`);
-  
+  const metaPath = path.join(DATA_DIR, destination + '.meta.json');
+  const maxAttempts = 3;
+  const timeoutMs = 15000;
+  console.log(`Downloading ${url} to ${filePath} (attempt ${attempt}/${maxAttempts})...`);
+
   return new Promise((resolve, reject) => {
-    // Determine which protocol to use
     const protocol = url.startsWith('https') ? https : http;
-    
-    // Make the HTTP/HTTPS request
-    const request = protocol.get(url, (response) => {
+    const headers = {};
+    const meta = readMeta(metaPath);
+    if (meta?.etag) headers['If-None-Match'] = meta.etag;
+    if (meta?.lastModified) headers['If-Modified-Since'] = meta.lastModified;
+    const req = protocol.request(url, { method: 'GET', headers }, (response) => {
       if (response.statusCode !== 200) {
+        if (response.statusCode === 304) {
+          console.log(`Not modified: ${destination}. Skipping download.`);
+          resolve();
+          return;
+        }
+        req.destroy();
         reject(new Error(`Failed to download ${url}: HTTP ${response.statusCode}`));
         return;
       }
-      
-      // Create a write stream to save the file
+
       const fileStream = fs.createWriteStream(filePath);
-      
-      // Pipe the response to the file
       response.pipe(fileStream);
-      
+
       fileStream.on('finish', () => {
         fileStream.close();
         console.log(`Successfully downloaded ${destination}`);
+        const etag = response.headers['etag'];
+        const lastModified = response.headers['last-modified'];
+        writeMeta(metaPath, {
+          etag: Array.isArray(etag) ? etag[0] : etag || null,
+          lastModified: Array.isArray(lastModified) ? lastModified[0] : lastModified || null,
+          downloadedAt: new Date().toISOString()
+        });
         resolve();
       });
-      
       fileStream.on('error', (err) => {
-        fs.unlink(filePath, () => {}); // Delete the file if there's an error
-        console.error(`Error writing to file: ${err.message}`);
+        try { fs.unlinkSync(filePath); } catch {}
         reject(err);
       });
     });
-    
-    request.on('error', (err) => {
-      console.error(`Error during request: ${err.message}`);
-      reject(err);
+
+    const timer = setTimeout(() => {
+      try { req.destroy(new Error('Timeout')); } catch {}
+    }, timeoutMs);
+
+    req.on('close', () => {
+      clearTimeout(timer);
     });
-    
-    request.end();
+
+    req.on('error', async (err) => {
+      clearTimeout(timer);
+      if (attempt < maxAttempts) {
+        const backoff = Math.min(2000 * Math.pow(2, attempt - 1), 8000);
+        setTimeout(async () => {
+          try {
+            await downloadFile(url, destination, attempt + 1);
+            resolve();
+          } catch (e) {
+            reject(e);
+          }
+        }, backoff);
+      } else {
+        reject(err);
+      }
+    });
+
+    req.end();
   });
 }
 
