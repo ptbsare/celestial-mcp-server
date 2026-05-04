@@ -275,14 +275,85 @@ export async function loadStarCatalog(filePath: string): Promise<void> {
 /**
  * Initialize catalogs from data files
  */
+/**
+ * Download a catalog file if it doesn't exist or is outdated.
+ * Runs at first launch, not at install time, to avoid npx/postinstall network issues.
+ */
+async function downloadCatalogIfNeeded(
+  url: string,
+  destPath: string,
+  description: string
+): Promise<boolean> {
+  // Skip download if file already exists and is > 1MB (assume it's the full catalog)
+  try {
+    const stat = fs.statSync(destPath);
+    if (stat.size > 1_000_000) {
+      logger.info(`${description} already exists (${(stat.size / 1_000_000).toFixed(1)}MB), skipping download`);
+      return true;
+    }
+  } catch {
+    // File doesn't exist, proceed to download
+  }
+
+  const https = await import('https');
+  const http = await import('http');
+
+  return new Promise((resolve) => {
+    const doDownload = (attempt: number) => {
+      const maxAttempts = 2;
+      logger.info(`Downloading ${description} (attempt ${attempt}/${maxAttempts})...`);
+      const protocol = url.startsWith('https') ? https.default : http.default;
+      const req = protocol.request(url, { method: 'GET', timeout: 30000 }, (response: any) => {
+        if (response.statusCode !== 200) {
+          response.resume();
+          if (attempt < maxAttempts) {
+            setTimeout(() => doDownload(attempt + 1), 2000);
+          } else {
+            logger.warn(`Failed to download ${description}: HTTP ${response.statusCode}`);
+            resolve(false);
+          }
+          return;
+        }
+        const fileStream = fs.createWriteStream(destPath);
+        response.pipe(fileStream);
+        fileStream.on('finish', () => {
+          fileStream.close();
+          const stat = fs.statSync(destPath);
+          logger.info(`Downloaded ${description} (${(stat.size / 1_000_000).toFixed(1)}MB)`);
+          resolve(true);
+        });
+        fileStream.on('error', () => {
+          try { fs.unlinkSync(destPath); } catch {}
+          resolve(false);
+        });
+      });
+      req.on('error', () => {
+        if (attempt < maxAttempts) {
+          setTimeout(() => doDownload(attempt + 1), 2000);
+        } else {
+          logger.warn(`Failed to download ${description}: network error`);
+          resolve(false);
+        }
+      });
+      req.on('timeout', () => {
+        req.destroy();
+        if (attempt < maxAttempts) {
+          setTimeout(() => doDownload(attempt + 1), 2000);
+        } else {
+          resolve(false);
+        }
+      });
+      req.end();
+    };
+    doDownload(1);
+  });
+}
+
 export async function initializeCatalogs(): Promise<void> {
-  // Use a direct path to the data directory
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
 
-  // Try multiple data directory candidates:
-  // 1. Relative to this module (works for npx and dev)
-  // 2. Relative to CWD (legacy fallback)
+  // Resolve data directory - works for npx, local dev, and global install
   const candidates = [
     path.resolve(__dirname, '../../data'),
     path.resolve(__dirname, '../data'),
@@ -291,66 +362,58 @@ export async function initializeCatalogs(): Promise<void> {
 
   let dataDir = candidates.find(d => fs.existsSync(d));
   if (!dataDir) {
-    dataDir = candidates[0]; // default to first candidate
-  }
-
-  const projectRoot = path.resolve(__dirname, '../../..'); // Project root for running script
-  logger.info(`Looking for catalog data in: ${dataDir}`);
-  
-  // Check if data directory exists
-  if (!fs.existsSync(dataDir)) {
-    logger.warn(`Data directory not found at ${dataDir}. It will be created. The application will attempt to download catalogs.`);
+    dataDir = candidates[0];
     fs.mkdirSync(dataDir, { recursive: true });
   }
-  
+
+  logger.info(`Looking for catalog data in: ${dataDir}`);
+
   // --- Star Catalog ---
-  let starCatalogLoaded = false;
-  const primaryStarFiles = [
-    'hygdata_v41.csv',
-    'stars.csv',
-    'bright_stars.csv'
-  ];
-  // sample_stars.csv is in the repo, so check for it as a last resort among existing files.
-  const allStarFilesToCheck = [...primaryStarFiles, 'sample_stars.csv']; 
+  const hygPath = path.join(dataDir, 'hygdata_v41.csv');
+  const sampleStarsPath = path.join(dataDir, 'sample_stars.csv');
 
-  for (const file of allStarFilesToCheck) {
-    const filePath = path.join(dataDir, file);
-    if (fs.existsSync(filePath)) {
-      logger.info(`Loading star catalog from ${filePath}`);
-      await loadStarCatalog(filePath);
-      starCatalogLoaded = true;
-      break;
+  if (!fs.existsSync(hygPath)) {
+    // Use sample stars as fallback, then try to download full catalog
+    if (fs.existsSync(sampleStarsPath)) {
+      logger.info('Loading sample star catalog (run fetch-catalogs for full database)');
+      await loadStarCatalog(sampleStarsPath);
     }
-  }
-
-  if (!starCatalogLoaded) {
-    logger.warn('No star catalog file was successfully loaded, even after download attempt. Star catalog will be empty or incomplete.');
-    // STAR_CATALOG will remain as it is (likely empty).
+    // Download full catalog in background (non-blocking)
+    downloadCatalogIfNeeded(
+      'https://raw.githubusercontent.com/astronexus/HYG-Database/master/hyg/CURRENT/hygdata_v41.csv',
+      hygPath,
+      'HYG star database'
+    ).then(success => {
+      if (success && fs.existsSync(hygPath)) {
+        logger.info('Full HYG star database downloaded. Restart server to use it.');
+      }
+    });
+  } else {
+    logger.info('Loading HYG star catalog');
+    await loadStarCatalog(hygPath);
   }
 
   // --- DSO Catalog ---
-  let dsoCatalogLoaded = false;
-  const primaryDsoFiles = [
-    'ngc.csv',
-    'messier.csv',
-    'dso.csv'
-  ];
-  // sample_dso.csv is in the repo, so check for it as a last resort among existing files.
-  const allDsoFilesToCheck = [...primaryDsoFiles, 'sample_dso.csv'];
+  const ngcPath = path.join(dataDir, 'ngc.csv');
+  const sampleDsoPath = path.join(dataDir, 'sample_dso.csv');
 
-  for (const file of allDsoFilesToCheck) {
-    const filePath = path.join(dataDir, file);
-    if (fs.existsSync(filePath)) {
-      logger.info(`Loading DSO catalog from ${filePath}`);
-      await loadDSOCatalog(filePath);
-      dsoCatalogLoaded = true;
-      break;
+  if (!fs.existsSync(ngcPath)) {
+    if (fs.existsSync(sampleDsoPath)) {
+      logger.info('Loading sample DSO catalog (run fetch-catalogs for full database)');
+      await loadDSOCatalog(sampleDsoPath);
     }
-  }
-
-  if (!dsoCatalogLoaded) {
-    logger.warn('No DSO catalog file was successfully loaded, even after download attempt. DSO catalog will be empty or incomplete.');
-    // DSO_CATALOG will remain as it is (likely empty).
+    downloadCatalogIfNeeded(
+      'https://raw.githubusercontent.com/mattiaverga/OpenNGC/master/database_files/NGC.csv',
+      ngcPath,
+      'OpenNGC catalog'
+    ).then(success => {
+      if (success && fs.existsSync(ngcPath)) {
+        logger.info('Full OpenNGC catalog downloaded. Restart server to use it.');
+      }
+    });
+  } else {
+    logger.info('Loading OpenNGC catalog');
+    await loadDSOCatalog(ngcPath);
   }
 }
 

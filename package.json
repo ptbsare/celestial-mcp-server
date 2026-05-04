@@ -19,8 +19,7 @@
     "fetch-catalogs": "node scripts/fetch-catalogs.js",
     "validate": "mcp validate",
     "dev": "node --require ./scripts/node24-polyfills.cjs --loader ts-node/esm src/index.ts",
-    "prepare": "npm run build",
-    "postinstall": "node scripts/fetch-catalogs.js"
+    "prepare": "npm run build"
   },
   "dependencies": {
     "astronomy-engine": "^2.1.17",
