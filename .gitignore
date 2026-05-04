@@ -26,5 +26,5 @@ temp/
 
 # HYG database and other large catalog files already present in 'data/' directory
 # These files should be downloaded using the fetch-catalogs.js script
-data/hygdata_v*.csv
-data/ngc.csv
+data/hygdata*
+data/ngc*
