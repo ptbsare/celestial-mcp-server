@@ -66,7 +66,7 @@ export async function loadDSOCatalog(filePath: string): Promise<void> {
     const delimiter = isOpenNGC ? ';' : ',';
     const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
     await new Promise<void>((resolve, reject) => {
-      const parser = parse({ columns: true, skip_empty_lines: true, delimiter });
+      const parser = parse({ columns: true, skip_empty_lines: true, delimiter, relax_column_count: true });
       parser.on('data', (record: any) => {
         let name = record.name || record.Name || record.id || record.ID || record.Name || '';
         const commonName = record.common_name || record.commonName || record['common name'] || record['Common names'] || '';
@@ -177,7 +177,7 @@ export async function loadStarCatalog(filePath: string): Promise<void> {
       logger.info('Using specific parser for HYG database format');
       const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
       await new Promise<void>((resolve, reject) => {
-        const parser = parse({ columns: true, skip_empty_lines: true, delimiter: ',' });
+        const parser = parse({ columns: true, skip_empty_lines: true, delimiter: ',', relax_column_count: true });
         parser.on('data', (record: any) => {
           const hasName = record.proper || record.bf;
           const isBright = record.mag !== undefined && parseFloat(record.mag) < 6.0;
@@ -222,7 +222,7 @@ export async function loadStarCatalog(filePath: string): Promise<void> {
     }
     const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
     await new Promise<void>((resolve, reject) => {
-      const parser = parse({ columns: true, skip_empty_lines: true, delimiter: ',' });
+      const parser = parse({ columns: true, skip_empty_lines: true, delimiter: ',', relax_column_count: true });
       parser.on('data', (record: any) => {
         let name = record.name || record.proper || record.ProperName || '';
         let altName = record.alt_name || record.BayerFlamsteed || '';
@@ -285,14 +285,18 @@ export async function loadStarCatalog(filePath: string): Promise<void> {
 async function downloadCatalogIfNeeded(
   url: string,
   destPath: string,
-  description: string
+  description: string,
+  minSizeBytes: number = 500_000
 ): Promise<boolean> {
-  // Skip download if file already exists and is > 1MB (assume it's the full catalog)
+  // Skip download if file already exists and is large enough (assume complete)
   try {
     const stat = fs.statSync(destPath);
-    if (stat.size > 1_000_000) {
+    if (stat.size >= minSizeBytes) {
       logger.info(`${description} already exists (${(stat.size / 1_000_000).toFixed(1)}MB), skipping download`);
       return true;
+    } else {
+      logger.info(`${description} exists but is incomplete (${(stat.size / 1000).toFixed(0)}KB), will re-download`);
+      fs.unlinkSync(destPath);
     }
   } catch {
     // File doesn't exist, proceed to download
