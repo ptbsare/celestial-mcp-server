@@ -392,12 +392,13 @@ export async function initializeCatalogs(): Promise<void> {
       'HYG star database'
     ).then(success => {
       if (success && fs.existsSync(hygPath)) {
-        logger.info('Full HYG star database downloaded. Restart server to use it.');
+        logger.info('Full HYG star database downloaded. Server will hot-reload on next check.');
       }
     });
   } else {
     logger.info('Loading HYG star catalog');
     await loadStarCatalog(hygPath);
+    catalogsLoaded.hyg = true;
   }
 
   // --- DSO Catalog ---
@@ -415,19 +416,60 @@ export async function initializeCatalogs(): Promise<void> {
       'OpenNGC catalog'
     ).then(success => {
       if (success && fs.existsSync(ngcPath)) {
-        logger.info('Full OpenNGC catalog downloaded. Restart server to use it.');
+        logger.info('Full OpenNGC catalog downloaded. Server will hot-reload on next check.');
       }
     });
   } else {
     logger.info('Loading OpenNGC catalog');
     await loadDSOCatalog(ngcPath);
+    catalogsLoaded.ngc = true;
   }
 }
 
+// Track which catalogs have been loaded so we can detect new downloads
+let catalogsLoaded = {
+  hyg: false,
+  ngc: false,
+};
 
-/**
- * Calculate solar system object positions using astronomy-engine
- */
+export function reloadCatalogsIfNeeded(): void {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const dataDir = path.resolve(__dirname, '../../data');
+
+  const hygPath = path.join(dataDir, 'hygdata_v41.csv');
+  const ngcPath = path.join(dataDir, 'ngc.csv');
+
+  // Check HYG - only reload if not yet loaded and file exists with sufficient size
+  if (!catalogsLoaded.hyg && fs.existsSync(hygPath)) {
+    try {
+      const stat = fs.statSync(hygPath);
+      if (stat.size >= 500_000) {
+        catalogsLoaded.hyg = true; // Mark immediately to prevent re-entry
+        logger.info('Hot-reloading HYG star catalog...');
+        STAR_CATALOG.clear();
+        loadStarCatalog(hygPath).then(() => {
+          logger.info(`HYG catalog hot-reloaded: ${STAR_CATALOG.size} stars`);
+        });
+      }
+    } catch {}
+  }
+
+  // Check NGC
+  if (!catalogsLoaded.ngc && fs.existsSync(ngcPath)) {
+    try {
+      const stat = fs.statSync(ngcPath);
+      if (stat.size >= 500_000) {
+        catalogsLoaded.ngc = true; // Mark immediately to prevent re-entry
+        logger.info('Hot-reloading OpenNGC catalog...');
+        DSO_CATALOG.clear();
+        loadDSOCatalog(ngcPath).then(() => {
+          logger.info(`OpenNGC catalog hot-reloaded: ${DSO_CATALOG.size} objects`);
+        });
+      }
+    } catch {}
+  }
+}
 function getSolarSystemCoordinates(name: string, date: Date): EquatorialCoordinates {
   // Create a default observer for equatorial coordinates (geocentric)
   const defaultObserver = new Astronomy.Observer(0, 0, 0);
