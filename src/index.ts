@@ -1,8 +1,11 @@
 import { MCPServer } from "mcp-framework";
 import { initializeCatalogs } from "./utils/astronomy.js";
-// The MCP framework will automatically discover and register our tools
+import { fileURLToPath } from "url";
+import { dirname } from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 await initializeCatalogs();
-const server = new MCPServer();
-
+const server = new MCPServer({ basePath: __dirname });
 server.start();
