@@ -2,8 +2,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as https from 'https';
 import * as http from 'http';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const DATA_DIR = path.resolve(__dirname, '..', 'data');
 
 // Catalog URLs - using raw GitHub URLs directly
 const CATALOGS = [

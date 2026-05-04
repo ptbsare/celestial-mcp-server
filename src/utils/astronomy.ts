@@ -279,7 +279,21 @@ export async function initializeCatalogs(): Promise<void> {
   // Use a direct path to the data directory
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
-  const dataDir = path.resolve(__dirname, '../../data');
+
+  // Try multiple data directory candidates:
+  // 1. Relative to this module (works for npx and dev)
+  // 2. Relative to CWD (legacy fallback)
+  const candidates = [
+    path.resolve(__dirname, '../../data'),
+    path.resolve(__dirname, '../data'),
+    path.resolve(process.cwd(), 'data'),
+  ];
+
+  let dataDir = candidates.find(d => fs.existsSync(d));
+  if (!dataDir) {
+    dataDir = candidates[0]; // default to first candidate
+  }
+
   const projectRoot = path.resolve(__dirname, '../../..'); // Project root for running script
   logger.info(`Looking for catalog data in: ${dataDir}`);
   
