@@ -61,7 +61,8 @@ export async function loadDSOCatalog(filePath: string): Promise<void> {
       logger.warn(`DSO catalog file ${filePath} not found. Data from this file will not be loaded.`);
       return;
     }
-    const isOpenNGC = filePath.endsWith('ngc.csv') || filePath.includes('NGC.csv');
+    // Detect delimiter from file extension and content
+    const isOpenNGC = filePath.endsWith('ngc.csv') || filePath.includes('NGC.csv') || filePath.includes('sample_dso');
     const delimiter = isOpenNGC ? ';' : ',';
     const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
     await new Promise<void>((resolve, reject) => {
@@ -227,13 +228,15 @@ export async function loadStarCatalog(filePath: string): Promise<void> {
         let altName = record.alt_name || record.BayerFlamsteed || '';
         let raHours: number | undefined;
         let decDegrees: number | undefined;
-        if (record.ra_hours !== undefined) raHours = parseFloat(record.ra_hours);
-        else if (record.RA !== undefined) {
+        if (record.ra_hours !== undefined && record.ra_hours !== '') raHours = parseFloat(record.ra_hours);
+        else if (record.ra !== undefined && record.ra !== null && record.ra !== '') raHours = parseFloat(record.ra);
+        else if (record.RA !== undefined && record.RA !== '') {
           const ra = parseFloat(record.RA);
           if (!isNaN(ra)) raHours = ra / 15;
         }
-        if (record.dec_degrees !== undefined) decDegrees = parseFloat(record.dec_degrees);
-        else if (record.Dec !== undefined) decDegrees = parseFloat(record.Dec);
+        if (record.dec_degrees !== undefined && record.dec_degrees !== '') decDegrees = parseFloat(record.dec_degrees);
+        else if (record.dec !== undefined && record.dec !== null && record.dec !== '') decDegrees = parseFloat(record.dec);
+        else if (record.Dec !== undefined && record.Dec !== '') decDegrees = parseFloat(record.Dec);
         if (!name || raHours === undefined || decDegrees === undefined || isNaN(raHours) || isNaN(decDegrees)) return;
         let magnitude: number | undefined;
         if (record.mag !== undefined && record.mag !== null && record.mag !== '') {
