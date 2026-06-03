@@ -2,7 +2,7 @@
 node_modules/
 
 # Build output
-dist/
+# dist/ — committed to repo so bunx github:... works out of the box
 
 # Environment variables
 .env
