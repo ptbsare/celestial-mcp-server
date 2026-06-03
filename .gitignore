@@ -3,6 +3,9 @@ node_modules/
 
 # Build output
 # dist/ — committed to repo so bunx github:... works out of the box
+dist/*.d.ts
+dist/*.d.ts.map
+dist/*.js.map
 
 # Environment variables
 .env
